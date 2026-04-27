@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ⚠️ ВСТАВЬ СВОИ НОВЫЕ КЛЮЧИ (получи их заново!):
 TELEGRAM_BOT_TOKEN = "8611024215:AAFyLo-uj3MFkvHPPbUzGmE5WvRK4RqdSo4"
 AVIASALES_API_TOKEN = "4587b79386fe645570e662bfc28aaf95"
-ADMIN_CHAT_ID = -5111899468  # ЗАМЕНИ НА СВОЙ ID (узнай у @userinfobot)
+ADMIN_CHAT_ID = -5111899468  # ID группы (отрицательное число)
 
 # Маршрут
 ORIGIN_IATA = "MOW"      # Москва
@@ -167,22 +167,7 @@ def format_price_alert(ticket: Dict[str, Any], is_new_low: bool = False, is_manu
         header = "✈️ ЦЕНА ИЗМЕНИЛАСЬ"
         trend = "📈 ЦЕНА ВЫРОСЛА"
     
-    if is_manual_check:
-        message = f"""
-{header}
-
-📍 **Маршрут:** Москва → Бали → Москва
-📅 **Туда:** {depart_formatted}
-📅 **Обратно:** {return_formatted}
-✈️ **Тип рейса:** ПРЯМОЙ (без пересадок)
-🛩️ **Авиакомпания:** {airline_name} ({airline})
-💸 **Цена (туда-обратно):** {price} ₽
-🔗 **[Купить билет на Aviasales]({full_url})**
-
-⏰ _Время проверки: {datetime.now(MSK_TZ).strftime('%H:%M:%S %d.%m.%Y')}_
-"""
-    else:
-        message = f"""
+    message = f"""
 {header}
 
 {trend}
@@ -258,44 +243,70 @@ async def check_prices_and_notify(is_manual: bool = False):
 # Команда /start
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    # Проверяем, что пользователь - админ
-    if message.from_user.id != ADMIN_CHAT_ID:
-        await message.answer("❌ У вас нет доступа к этому боту.")
-        return
-    
-    await message.answer(
-        f"✈️ Бот запущен!\n\n"
-        f"📍 Москва → Бали → Москва\n"
-        f"📅 Туда: 1 августа 2026\n"
-        f"📅 Обратно: 23 августа 2026\n"
-        f"✈️ **Только прямые рейсы (без пересадок)**\n"
-        f"🛩️ Отслеживается: Аэрофлот (SU)\n\n"
-        f"🔄 Проверка цен: каждый час\n"
-        f"📌 /price — узнать текущую цену на прямой рейс\n"
-        f"📌 /check — принудительная проверка цен прямо сейчас"
-    )
+    # Проверяем, что пользователь - админ (только для лички)
+    if message.chat.type in ["group", "supergroup"]:
+        # В группе нет проверки - отвечаем всем
+        await message.answer(
+            f"✈️ Бот отслеживает билеты Москва → Бали\n\n"
+            f"📅 Туда: 1 августа 2026\n"
+            f"📅 Обратно: 23 августа 2026\n"
+            f"✈️ **Только прямые рейсы (без пересадок)**\n"
+            f"🛩️ Отслеживается: Аэрофлот (SU)\n\n"
+            f"📌 Команды:\n"
+            f"/price — узнать текущую цену\n"
+            f"/check — принудительная проверка цен"
+        )
+    else:
+        # В личке - только для админа
+        if message.from_user.id != ADMIN_CHAT_ID:
+            await message.answer("❌ У вас нет доступа к этому боту.")
+            return
+        
+        await message.answer(
+            f"✈️ Бот запущен!\n\n"
+            f"📍 Москва → Бали → Москва\n"
+            f"📅 Туда: 1 августа 2026\n"
+            f"📅 Обратно: 23 августа 2026\n"
+            f"✈️ **Только прямые рейсы (без пересадок)**\n"
+            f"🛩️ Отслеживается: Аэрофлот (SU)\n\n"
+            f"🔄 Проверка цен: каждый час\n"
+            f"📌 /price — узнать текущую цену на прямой рейс\n"
+            f"📌 /check — принудительная проверка цен прямо сейчас"
+        )
 
 # Команда /price
 @dp.message(Command("price"))
 async def cmd_price(message: Message):
-    # Проверяем, что пользователь - админ
-    if message.from_user.id != ADMIN_CHAT_ID:
-        await message.answer("❌ У вас нет доступа к этому боту.")
-        return
-    
-    await message.answer("🔍 Ищу прямые рейсы (только Аэрофлот, без пересадок)...")
-    await check_prices_and_notify(is_manual=True)
+    # В группе - отвечаем всем, в личке - только админу
+    if message.chat.type in ["group", "supergroup"]:
+        # В группе нет проверки
+        await message.answer("🔍 Ищу прямые рейсы (только Аэрофлот, без пересадок)...")
+        await check_prices_and_notify(is_manual=True)
+    else:
+        # В личке - только для админа
+        if message.from_user.id != ADMIN_CHAT_ID:
+            await message.answer("❌ У вас нет доступа к этому боту.")
+            return
+        
+        await message.answer("🔍 Ищу прямые рейсы (только Аэрофлот, без пересадок)...")
+        await check_prices_and_notify(is_manual=True)
 
 # Команда /check (принудительная проверка)
 @dp.message(Command("check"))
 async def cmd_check(message: Message):
-    # Проверяем, что пользователь - админ
-    if message.from_user.id != ADMIN_CHAT_ID:
-        await message.answer("❌ У вас нет доступа к этому боту.")
-        return
-    
-    await message.answer("🔄 Принудительная проверка цен...\n\nБот проверяет актуальные цены на прямые рейсы прямо сейчас. Это может занять несколько секунд.")
-    await check_prices_and_notify(is_manual=True)
+    # В группе - отвечаем всем, в личке - только админу
+    if message.chat.type in ["group", "supergroup"]:
+        # В группе нет проверки
+        await message.answer("🔄 Принудительная проверка цен...\n\nБот проверяет актуальные цены на прямые рейсы прямо сейчас. Это может занять несколько секунд.")
+        await check_prices_and_notify(is_manual=True)
+    else:
+        # В личке - только для админа
+        if message.from_user.id != ADMIN_CHAT_ID:
+            await message.answer("❌ У вас нет доступа к этому боту.")
+            return
+        
+        await message.answer("🔄 Принудительная проверка цен...\n\nБот проверяет актуальные цены на прямые рейсы прямо сейчас. Это может занять несколько секунд.")
+        await check_prices_and_notify(is_manual=True)
 
 # Периодическая проверка (каждый час)
 async def scheduled_monitoring():
