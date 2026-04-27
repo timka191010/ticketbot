@@ -19,7 +19,6 @@ TELEGRAM_BOT_TOKEN = "8611024215:AAEDivgf-iQlJjnTkTUUtv0J6z9SgRuY3CE"
 AVIASALES_API_TOKEN = "4587b79386fe645570e662bfc28aaf95"
 ADMIN_CHAT_ID = -5111899468  # ЗАМЕНИ НА СВОЙ ID (узнай у @userinfobot)
 
-
 # Маршрут
 ORIGIN_IATA = "MOW"      # Москва
 DESTINATION_IATA = "DPS" # Бали
@@ -136,7 +135,7 @@ async def fetch_round_trip_prices(origin: str, destination: str, depart_date: st
             return []
 
 # Форматирование сообщения
-def format_price_alert(ticket: Dict[str, Any], is_new_low: bool = False) -> str:
+def format_price_alert(ticket: Dict[str, Any], is_new_low: bool = False, is_manual_check: bool = False) -> str:
     price = ticket.get('price', 'Цена неизвестна')
     airline = ticket.get('airline', 'Неизвестная авиакомпания')
     link = ticket.get('link', '')
@@ -158,14 +157,32 @@ def format_price_alert(ticket: Dict[str, Any], is_new_low: bool = False) -> str:
     
     full_url = f"https://www.aviasales.ru{link}" if link else SEARCH_URL
     
-    if is_new_low:
+    if is_manual_check:
+        header = "🔍 РЕЗУЛЬТАТ ПРОВЕРКИ ЦЕНЫ"
+        trend = ""
+    elif is_new_low:
         header = "🎉 НОВЫЙ МИНИМУМ ЦЕНЫ! 🎉"
         trend = "🔻 ЦЕНА СНИЗИЛАСЬ"
     else:
         header = "✈️ ЦЕНА ИЗМЕНИЛАСЬ"
         trend = "📈 ЦЕНА ВЫРОСЛА"
     
-    message = f"""
+    if is_manual_check:
+        message = f"""
+{header}
+
+📍 **Маршрут:** Москва → Бали → Москва
+📅 **Туда:** {depart_formatted}
+📅 **Обратно:** {return_formatted}
+✈️ **Тип рейса:** ПРЯМОЙ (без пересадок)
+🛩️ **Авиакомпания:** {airline_name} ({airline})
+💸 **Цена (туда-обратно):** {price} ₽
+🔗 **[Купить билет на Aviasales]({full_url})**
+
+⏰ _Время проверки: {datetime.now(MSK_TZ).strftime('%H:%M:%S %d.%m.%Y')}_
+"""
+    else:
+        message = f"""
 {header}
 
 {trend}
@@ -183,7 +200,7 @@ def format_price_alert(ticket: Dict[str, Any], is_new_low: bool = False) -> str:
     return message.strip()
 
 # Проверка цен
-async def check_prices_and_notify():
+async def check_prices_and_notify(is_manual: bool = False):
     route_key = f"{ORIGIN_IATA}_{DESTINATION_IATA}_{DEPARTURE_DATE}_{RETURN_DATE}_direct"
     last_price = get_last_price(route_key)
     
@@ -193,6 +210,13 @@ async def check_prices_and_notify():
     
     if not tickets:
         print("Прямые билеты не найдены")
+        if is_manual:
+            # Отправляем сообщение пользователю, что билетов нет
+            await bot.send_message(
+                chat_id=ADMIN_CHAT_ID, 
+                text="❌ Прямые билеты (Аэрофлот) не найдены на эти даты.\n\nВозможно, на указанные даты нет прямых рейсов.",
+                parse_mode=ParseMode.MARKDOWN
+            )
         return
     
     cheapest_ticket = tickets[0]
@@ -205,19 +229,27 @@ async def check_prices_and_notify():
     print(f"Текущая минимальная цена (прямой рейс): {current_price} ₽")
     print(f"Было: {last_price if last_price else 'нет данных'}")
     
+    # Если ручная проверка - всегда отправляем текущую цену
+    if is_manual:
+        msg = format_price_alert(cheapest_ticket, is_new_low=False, is_manual_check=True)
+        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
+        print(f"✅ Отправлен ручной отчёт: {current_price} ₽")
+        return
+    
+    # Автоматическая проверка (по расписанию)
     if last_price is None:
         update_price(route_key, current_price)
-        msg = format_price_alert(cheapest_ticket, is_new_low=True)
+        msg = format_price_alert(cheapest_ticket, is_new_low=True, is_manual_check=False)
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
         print(f"✅ Отправлено начальное уведомление: {current_price} ₽")
     elif current_price < last_price:
         update_price(route_key, current_price)
-        msg = format_price_alert(cheapest_ticket, is_new_low=True)
+        msg = format_price_alert(cheapest_ticket, is_new_low=True, is_manual_check=False)
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
         print(f"🎉 СНИЖЕНИЕ: {last_price} → {current_price}")
     elif current_price > last_price:
         update_price(route_key, current_price)
-        msg = format_price_alert(cheapest_ticket, is_new_low=False)
+        msg = format_price_alert(cheapest_ticket, is_new_low=False, is_manual_check=False)
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
         print(f"⚠️ ПОВЫШЕНИЕ: {last_price} → {current_price}")
     else:
@@ -226,6 +258,11 @@ async def check_prices_and_notify():
 # Команда /start
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    # Проверяем, что пользователь - админ
+    if message.from_user.id != ADMIN_CHAT_ID:
+        await message.answer("❌ У вас нет доступа к этому боту.")
+        return
+    
     await message.answer(
         f"✈️ Бот запущен!\n\n"
         f"📍 Москва → Бали → Москва\n"
@@ -234,25 +271,37 @@ async def cmd_start(message: Message):
         f"✈️ **Только прямые рейсы (без пересадок)**\n"
         f"🛩️ Отслеживается: Аэрофлот (SU)\n\n"
         f"🔄 Проверка цен: каждый час\n"
-        f"📌 /price — узнать текущую цену на прямой рейс"
+        f"📌 /price — узнать текущую цену на прямой рейс\n"
+        f"📌 /check — принудительная проверка цен прямо сейчас"
     )
 
 # Команда /price
 @dp.message(Command("price"))
 async def cmd_price(message: Message):
+    # Проверяем, что пользователь - админ
+    if message.from_user.id != ADMIN_CHAT_ID:
+        await message.answer("❌ У вас нет доступа к этому боту.")
+        return
+    
     await message.answer("🔍 Ищу прямые рейсы (только Аэрофлот, без пересадок)...")
-    tickets = await fetch_round_trip_prices(ORIGIN_IATA, DESTINATION_IATA, DEPARTURE_DATE, RETURN_DATE)
-    if tickets:
-        msg = format_price_alert(tickets[0], is_new_low=False)
-        await message.answer(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
-    else:
-        await message.answer("❌ Прямые билеты (Аэрофлот) не найдены на эти даты.\n\nВозможно, на указанные даты нет прямых рейсов. Попробуй изменить даты.")
+    await check_prices_and_notify(is_manual=True)
+
+# Команда /check (принудительная проверка)
+@dp.message(Command("check"))
+async def cmd_check(message: Message):
+    # Проверяем, что пользователь - админ
+    if message.from_user.id != ADMIN_CHAT_ID:
+        await message.answer("❌ У вас нет доступа к этому боту.")
+        return
+    
+    await message.answer("🔄 Принудительная проверка цен...\n\nБот проверяет актуальные цены на прямые рейсы прямо сейчас. Это может занять несколько секунд.")
+    await check_prices_and_notify(is_manual=True)
 
 # Периодическая проверка (каждый час)
 async def scheduled_monitoring():
     while True:
-        await check_prices_and_notify()
-        await asyncio.sleep(3600)
+        await check_prices_and_notify(is_manual=False)
+        await asyncio.sleep(3600)  # 1 час
 
 # Запуск
 async def main():
@@ -260,6 +309,7 @@ async def main():
     print("🚀 Бот запущен! Мониторинг ТОЛЬКО ПРЯМЫХ РЕЙСОВ (Аэрофлот)")
     print(f"📅 Даты: {DEPARTURE_DATE} → {RETURN_DATE}")
     print(f"🕐 Московское время: {datetime.now(MSK_TZ).strftime('%H:%M:%S')}")
+    print(f"📌 Доступны команды: /start, /price, /check")
     asyncio.create_task(scheduled_monitoring())
     await dp.start_polling(bot)
 
