@@ -2,35 +2,34 @@ import asyncio
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import pytz  # для работы с часовыми поясами
 
 import aiohttp
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.enums import ParseMode
 
 # ================= НАСТРОЙКИ =================
-# ⚠️ ВСТАВЬ СВОИ НОВЫЕ КЛЮЧИ (получи их заново!):
 TELEGRAM_BOT_TOKEN = "8611024215:AAEDivgf-iQlJjnTkTUUtv0J6z9SgRuY3CE"
 AVIASALES_API_TOKEN = "4587b79386fe645570e662bfc28aaf95"
-ADMIN_CHAT_ID = 7271900005  # ЗАМЕНИ НА СВОЙ ID (узнай у @userinfobot)
+ADMIN_CHAT_ID = 7271900005
 
-# Маршрут
-ORIGIN_IATA = "MOW"      # Москва
-DESTINATION_IATA = "DPS" # Бали
+# Маршрут и даты
+ORIGIN_IATA = "MOW"
+DESTINATION_IATA = "DPS"
+DEPARTURE_DATE = "2026-08-01"
+RETURN_DATE = "2026-08-23"
 
-# ДАТЫ (фиксированные)
-DEPARTURE_DATE = "2026-08-01"   # Туда
-RETURN_DATE = "2026-08-23"      # Обратно
+# Московский часовой пояс (MSK, UTC+3)
+MSK_TZ = pytz.timezone('Europe/Moscow')
 
-# Ссылка на поиск на Aviasales
-SEARCH_URL = f"https://www.aviasales.ru/search/{ORIGIN_IATA}{DESTINATION_IATA}1?departure_date={DEPARTURE_DATE}&return_date={RETURN_DATE}&direct=1"
+SEARCH_URL = f"https://www.aviasales.ru/search/{ORIGIN_IATA}{DESTINATION_IATA}1?departure_date={DEPARTURE_DATE}&return_date={RETURN_DATE}"
 # =============================================
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
-# База данных
 def init_db():
     conn = sqlite3.connect('flight_prices.db')
     cursor = conn.cursor()
@@ -61,11 +60,10 @@ def update_price(route: str, price: int):
         ON CONFLICT(route) DO UPDATE SET
             last_price = excluded.last_price,
             last_update = excluded.last_update
-    ''', (route, price, datetime.now()))
+    ''', (route, price, datetime.now(MSK_TZ)))  # ← московское время в БД
     conn.commit()
     conn.close()
 
-# Запрос цен (только прямые рейсы)
 async def fetch_round_trip_prices(origin: str, destination: str, depart_date: str, return_date: str) -> List[Dict[str, Any]]:
     url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
     params = {
@@ -74,7 +72,7 @@ async def fetch_round_trip_prices(origin: str, destination: str, depart_date: st
         "departure_at": depart_date,
         "return_at": return_date,
         "one_way": "false",
-        "direct": "true",
+        "direct": "false",
         "sorting": "price",
         "currency": "rub",
         "limit": 10,
@@ -86,15 +84,7 @@ async def fetch_round_trip_prices(origin: str, destination: str, depart_date: st
             async with session.get(url, params=params, timeout=30) as response:
                 if response.status == 200:
                     data = await response.json()
-                    tickets = data.get('data', [])
-                    
-                    direct_tickets = []
-                    for ticket in tickets:
-                        if ticket.get('transfers') == 0 or ticket.get('segments') is None:
-                            direct_tickets.append(ticket)
-                    
-                    print(f"  Найдено прямых билетов: {len(direct_tickets)} из {len(tickets)}")
-                    return direct_tickets
+                    return data.get('data', [])
                 else:
                     print(f"Ошибка API: HTTP {response.status}")
                     return []
@@ -102,54 +92,76 @@ async def fetch_round_trip_prices(origin: str, destination: str, depart_date: st
             print(f"Ошибка при запросе: {e}")
             return []
 
-# Форматирование сообщения
+def get_stops_info(ticket: Dict[str, Any]) -> str:
+    """
+    Определяет, прямой рейс или с пересадками.
+    В ответе API есть поле 'stops' (количество пересадок)
+    """
+    stops = ticket.get('stops', 999)  # если нет данных — считаем с пересадками
+    if stops == 0:
+        return "ПРЯМОЙ (без пересадок)"
+    elif stops == 1:
+        return "1 пересадка"
+    else:
+        return f"{stops} пересадки"
+
 def format_price_alert(ticket: Dict[str, Any], is_new_low: bool = False) -> str:
     price = ticket.get('price', 'Цена неизвестна')
     airline = ticket.get('airline', 'Неизвестная авиакомпания')
     link = ticket.get('link', '')
+    stops_info = get_stops_info(ticket)
     
+    # Даты в читаемом формате
     depart_date_obj = datetime.strptime(DEPARTURE_DATE, "%Y-%m-%d")
     return_date_obj = datetime.strptime(RETURN_DATE, "%Y-%m-%d")
     depart_formatted = depart_date_obj.strftime("%d %B %Y").replace("August", "августа")
     return_formatted = return_date_obj.strftime("%d %B %Y").replace("August", "августа")
     
+    # Московское время прямо сейчас
+    now_msk = datetime.now(MSK_TZ)
+    time_str = now_msk.strftime("%H:%M:%S")
+    date_str = now_msk.strftime("%d.%m.%Y")
+    
     full_url = f"https://www.aviasales.ru{link}" if link else SEARCH_URL
     
+    # Выбор заголовка
     if is_new_low:
         header = "🎉 НОВЫЙ МИНИМУМ ЦЕНЫ! 🎉"
-        trend = "🔻 ЦЕНА СНИЗИЛАСЬ"
     else:
-        header = "✈️ ЦЕНА ИЗМЕНИЛАСЬ"
-        trend = "📈 ЦЕНА ВЫРОСЛА"
+        header = "✈️ ЦЕНА ВЫРОСЛА"
     
+    # Формируем сообщение в точности как на скриншоте
     message = f"""
 {header}
 
-{trend}
+📍 Маршрут: Москва → Бали → Москва
+📅 Туда: {depart_formatted}
+📅 Обратно: {return_formatted}
+🛫 Тип рейса: {stops_info}
+💰 Цена (туда-обратно): {price} ₽
+🛩️ Авиакомпания: {airline}
+🔗 Купить билет на Aviasales
 
-📍 **Маршрут:** Москва → Бали → Москва
-📅 **Туда:** {depart_formatted}
-📅 **Обратно:** {return_formatted}
-✈️ **Тип рейса:** ПРЯМОЙ (без пересадок)
-💸 **Цена (туда-обратно):** {price} ₽
-🛩️ **Авиакомпания:** {airline}
-🔗 **[Купить билет на Aviasales]({full_url})**
+⏰ Время проверки: {time_str}
+{date_str}
 
-⏰ _Время проверки: {datetime.now().strftime('%H:%M:%S %d.%m.%Y')}_
+---
+🔍 [Авиасейлс]({full_url})
+Дешёвые авиабилеты онлайн, цены. Поиск билетов на самолёт и сравнение цен
     """
     return message.strip()
 
-# Проверка цен
 async def check_prices_and_notify():
-    route_key = f"{ORIGIN_IATA}_{DESTINATION_IATA}_{DEPARTURE_DATE}_{RETURN_DATE}_direct"
+    route_key = f"{ORIGIN_IATA}_{DESTINATION_IATA}_{DEPARTURE_DATE}_{RETURN_DATE}"
     last_price = get_last_price(route_key)
     
-    print(f"[{datetime.now()}] Проверка цен на ПРЯМЫЕ рейсы...")
+    now_msk = datetime.now(MSK_TZ)
+    print(f"[{now_msk}] Проверка цен: Москва → Бали ({DEPARTURE_DATE}) → Москва ({RETURN_DATE})")
     
     tickets = await fetch_round_trip_prices(ORIGIN_IATA, DESTINATION_IATA, DEPARTURE_DATE, RETURN_DATE)
     
     if not tickets:
-        print("Прямые билеты не найдены")
+        print("Билеты не найдены или ошибка API")
         return
     
     cheapest_ticket = tickets[0]
@@ -159,13 +171,13 @@ async def check_prices_and_notify():
         print("Не удалось получить цену")
         return
     
-    print(f"Текущая цена: {current_price} ₽ (было: {last_price})")
+    print(f"Текущая цена: {current_price} ₽ (было: {last_price if last_price else 'нет данных'})")
     
     if last_price is None:
         update_price(route_key, current_price)
         msg = format_price_alert(cheapest_ticket, is_new_low=True)
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
-        print(f"✅ Отправлено начальное уведомление")
+        print("Отправлено начальное уведомление")
     elif current_price < last_price:
         update_price(route_key, current_price)
         msg = format_price_alert(cheapest_ticket, is_new_low=True)
@@ -179,61 +191,34 @@ async def check_prices_and_notify():
     else:
         print("Цена не изменилась")
 
-# Команда /start
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(
-        f"✈️ Бот запущен!\n\n"
+        f"✈️ Сканер билетов Бали\n\n"
         f"📍 Москва → Бали → Москва\n"
-        f"📅 Туда: 1 августа 2026\n"
-        f"📅 Обратно: 23 августа 2026\n"
-        f"✈️ **Только прямые рейсы**\n\n"
-        f"🔄 Проверка: каждый час\n"
-        f"📌 /price — узнать текущую цену"
+        f"📅 1 августа — 23 августа 2026\n"
+        f"✅ Отслеживаю изменения цен (каждый час)\n\n"
+        f"📌 /price — текущая цена"
     )
 
-# Команда /price
 @dp.message(Command("price"))
 async def cmd_price(message: Message):
-    await message.answer("🔍 Ищу прямые рейсы...")
+    await message.answer("🔍 Ищу билеты...")
     tickets = await fetch_round_trip_prices(ORIGIN_IATA, DESTINATION_IATA, DEPARTURE_DATE, RETURN_DATE)
     if tickets:
         msg = format_price_alert(tickets[0], is_new_low=False)
         await message.answer(msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
     else:
-        await message.answer("❌ Прямые билеты не найдены")
+        await message.answer("❌ Билеты не найдены")
 
-# Периодическая проверка
 async def scheduled_monitoring():
     while True:
         await check_prices_and_notify()
         await asyncio.sleep(3600)
 
-# ТЕСТОВАЯ ФУНКЦИЯ (для проверки уведомлений)
-async def test_notifications():
-    """Отправляет тестовые сообщения о снижении и повышении цены"""
-    print("\n🧪 ТЕСТОВЫЙ РЕЖИМ\n")
-    
-    # Тестовое снижение
-    test_ticket_low = {"price": 75000, "airline": "SU (Аэрофлот)", "link": ""}
-    msg_low = format_price_alert(test_ticket_low, is_new_low=True)
-    print("📨 Отправка тестового сообщения о СНИЖЕНИИ...")
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg_low, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
-    
-    await asyncio.sleep(2)
-    
-    # Тестовое повышение
-    test_ticket_high = {"price": 85000, "airline": "SU (Аэрофлот)", "link": ""}
-    msg_high = format_price_alert(test_ticket_high, is_new_low=False)
-    print("📨 Отправка тестового сообщения о ПОВЫШЕНИИ...")
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg_high, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=False)
-    
-    print("\n✅ Тест завершён! Проверь Telegram.")
-
-# Запуск
 async def main():
     init_db()
-    print("🚀 Бот запущен! Мониторинг ТОЛЬКО ПРЯМЫХ РЕЙСОВ")
+    print(f"🚀 Бот запущен. Часовой пояс: {MSK_TZ}")
     asyncio.create_task(scheduled_monitoring())
     await dp.start_polling(bot)
 
