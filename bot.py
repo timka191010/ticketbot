@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ================= НАСТРОЙКИ =================
 # ⚠️ ВСТАВЬ СВОИ НОВЫЕ КЛЮЧИ (получи их заново!):
-TELEGRAM_BOT_TOKEN = "8611024215:AAEDivgf-iQlJjnTkTUUtv0J6z9SgRuY3CE"
+TELEGRAM_BOT_TOKEN = "8611024215:AAFyLo-uj3MFkvHPPbUzGmE5WvRK4RqdSo4"
 AVIASALES_API_TOKEN = "4587b79386fe645570e662bfc28aaf95"
 ADMIN_CHAT_ID = -5111899468  # ЗАМЕНИ НА СВОЙ ID (узнай у @userinfobot)
 
