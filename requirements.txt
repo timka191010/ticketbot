@@ -2,4 +2,4 @@ aiogram>=3.15.0,<4.0.0
 aiohttp>=3.9.0
 pydantic>=2.9.0
 
-vless://24251b7c-f1ba-4893-9ee7-8a9109fedacf@31.186.99.51:443?encryption=none&security=tls&sni=homepage.andynet2.win&type=xhttp&path=%2F32036d3b44a2fd5d&mode=stream-up#VLESS-StreamUp-RU2
+
