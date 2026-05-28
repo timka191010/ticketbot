@@ -3,4 +3,3 @@ aiohttp>=3.9.0
 pydantic>=2.9.0
 
 
-wg://93.123.16.85:47730?publicKey=NJ7fHVIa1zFAM5qskQAteZcmGxa4%2BR8Px5Iyyyom8hw%3D&privateKey=aJ8bPqvila%2BJ4n6QHonIYzjEgaPo5d5F45rLgdxAE4k%3D&presharedKey=arAL5lVWn5MMqK501bVaMMwGYg6Ahlb/EtyZ%2B4tSVAw%3D&ip=10.8.1.62&dns=1.1.1.1,%201.0.0.1&udp=1&obfs=amneziawg&obfsParam=%7B%22s1%22:%2217%22,%22h2%22:%221954181166%22,%22jmax%22:%2250%22,%22s2%22:%2216%22,%22h3%22:%222134159487%22,%22jc%22:%222%22,%22jmin%22:%2210%22,%22h1%22:%22866379293%22,%22h4%22:%221461152539%22%7D&flag=BG
